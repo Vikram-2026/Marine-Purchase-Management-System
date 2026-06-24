@@ -33,8 +33,7 @@ const U = {
     const show = ['EUR','SGD','GBP','INR','AED'];
     const bar = document.getElementById('fx-bar');
     if (bar) bar.innerHTML = '<span>USD =</span> ' +
-      show.map(c => `<span class="fx-rate"><span>${c} </span><strong>${U.fxRates[c]?.toFixed(2)}</strong></span>`).join(' · ') +
-      ' <span title="Live rates" style="color:var(--hint)">🔴</span>';
+      show.map(c => `<span class="fx-rate"><span>${c} </span><strong>${U.fxRates[c]?.toFixed(2)}</strong></span>`).join(' · ');
   },
 
   // ── TOAST ──

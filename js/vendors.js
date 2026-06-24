@@ -1,12 +1,30 @@
 // js/vendors.js
 const Vendors = {
+  filterText: '',
+
+  setFilter(value) {
+    Vendors.filterText = value;
+    App.renderPage();
+  },
+
   async render(el) {
     const { data: vlist } = await sb.from('vendors').select('*').eq('active', true).order('name');
-    window._vendors = vlist || []; // cache for other modules
+    const filtered = (vlist || []).filter(v => {
+      const text = Vendors.filterText.toLowerCase();
+      if (!text) return true;
+      return [v.name, v.country, v.contact_person, v.currency, v.payment_terms, (v.categories || []).join(' ')].join(' ').toLowerCase().includes(text);
+    });
+    window._vendors = filtered; // cache for other modules
     el.innerHTML = `
-    <div class="page-hdr"><h2>Vendor Database</h2><button class="btn btn-primary" onclick="Vendors.openNew()">+ Add Vendor</button></div>
+    <div class="page-hdr">
+      <h2>Vendor Database</h2>
+      <div class="filters">
+        <input type="search" placeholder="Search vendors..." value="${Vendors.filterText}" oninput="Vendors.setFilter(this.value)">
+        <button class="btn btn-primary" onclick="Vendors.openNew()">+ Add Vendor</button>
+      </div>
+    </div>
     <div class="vendor-grid">
-      ${(vlist || []).map(v => `
+      ${(filtered || []).map(v => `
       <div class="vendor-card">
         <div style="display:flex;justify-content:space-between;align-items:flex-start">
           <div><div class="vendor-name">${v.name}</div><div class="vendor-sub">${v.country || '—'} · ${v.currency || 'USD'}</div></div>
@@ -24,7 +42,7 @@ const Vendors = {
         ${v.email ? `<div style="margin-top:8px;font-size:12px;color:var(--blue)">✉ ${v.email}</div>` : ''}
         ${v.phone ? `<div style="font-size:12px;color:var(--muted)">📞 ${v.phone}</div>` : ''}
         ${v.notes ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">${v.notes}</div>` : ''}
-      </div>`).join('') || '<div class="empty">No vendors yet. Add your first vendor.</div>'}
+      </div>`).join('') || '<div class="empty">No vendors matched the current filter.</div>'}
     </div>`;
   },
 

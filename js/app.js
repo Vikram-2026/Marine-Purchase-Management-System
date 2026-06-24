@@ -26,8 +26,8 @@ const App = {
     if (user.role === 'Admin') document.getElementById('admin-tab').style.display = 'flex';
 
     // Load global data
-    const { data: v } = await sb.from('vessels').select('*');
-    App.vessels = v || [];
+    await Settings.loadVessels();
+    App.vessels = Settings.state.vessels || [];
     await U.loadFX();
     App.setPage('dashboard');
   },
@@ -50,6 +50,7 @@ const App = {
       dn:        DN.render,
       vendors:   Vendors.render,
       pipeline:  App.renderPipeline,
+      settings:  Settings.render,
       admin:     Auth.renderAdmin,
     };
     const fn = map[App.currentPage];
@@ -71,8 +72,11 @@ const App = {
 
     el.innerHTML = `
     <div class="page-hdr">
-      <h2>Dashboard</h2>
-      <span class="cell-m">${new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}</span>
+      <div>
+        <h2>Dashboard</h2>
+        <div class="page-sub">${new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}</div>
+      </div>
+      <div class="fx-summary">FX: 1 USD = ${U.fxRates.EUR?.toFixed(2) || '—'} EUR · ${U.fxRates.SGD?.toFixed(2) || '—'} SGD</div>
     </div>
     <div class="stats-row">
       <div class="stat-card"><div class="stat-label">Total PRs</div><div class="stat-num c-blue">${totalPR || 0}</div></div>

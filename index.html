@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MarineProc — Purchase Management</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- CONFIG SCREEN (first time only) -->
+<div id="cfg-screen" style="display:none">
+  <div class="auth-card" style="width:460px">
+    <div class="auth-logo">⚓<h1>MarineProc Setup</h1><p>One-time Supabase connection. Saved locally.</p></div>
+    <div class="form-group"><label>SUPABASE PROJECT URL</label><input type="text" id="cfg-url" placeholder="https://xxxx.supabase.co"></div>
+    <div class="form-group"><label>SUPABASE ANON KEY</label><input type="text" id="cfg-key" placeholder="eyJhbGci..."></div>
+    <button class="auth-btn" onclick="App.saveConfig()">Save & Continue →</button>
+    <div class="auth-msg" id="cfg-msg"></div>
+  </div>
+</div>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">⚓<h1>MarineProc</h1><p>Purchase Management System</p></div>
+    <div class="auth-tabs">
+      <div class="auth-tab active" onclick="Auth.showTab('login')">Sign In</div>
+      <div class="auth-tab" onclick="Auth.showTab('register')">Request Access</div>
+    </div>
+    <div id="tab-login">
+      <div class="form-group"><label>Username</label><input type="text" id="login-user" placeholder="your username" autocomplete="username"></div>
+      <div class="form-group"><label>Password</label><input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password"></div>
+      <button class="auth-btn" onclick="Auth.login()">Sign In</button>
+      <div class="auth-msg" id="login-msg"></div>
+    </div>
+    <div id="tab-register" style="display:none">
+      <div class="info-box" style="margin-bottom:14px">Your request will be sent to the admin for approval. You'll be able to login once approved.</div>
+      <div class="form-group"><label>Full Name</label><input type="text" id="reg-name" placeholder="e.g. Ravi Kumar"></div>
+      <div class="form-group"><label>Username</label><input type="text" id="reg-user" placeholder="e.g. ravi.kumar"></div>
+      <div class="form-group"><label>Password</label><input type="password" id="reg-pass" placeholder="min 6 characters"></div>
+      <div class="form-group"><label>Role</label>
+        <select id="reg-role">
+          <option>Purchase Officer</option>
+          <option>Technical Superintendent</option>
+          <option>Fleet Manager</option>
+          <option>Accounts</option>
+        </select>
+      </div>
+      <button class="auth-btn" onclick="Auth.register()">Submit Request</button>
+      <div class="auth-msg" id="reg-msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+  <nav class="topbar">
+    <div class="brand">⚓ MarineProc</div>
+    <div class="nav-tabs" id="nav-tabs">
+      <div class="nav-tab active" onclick="App.setPage('dashboard')" data-p="dashboard">📊 Dashboard</div>
+      <div class="nav-tab" onclick="App.setPage('pr')" data-p="pr">📋 Purchase Requests</div>
+      <div class="nav-tab" onclick="App.setPage('rfq')" data-p="rfq">📨 RFQ & Quotes</div>
+      <div class="nav-tab" onclick="App.setPage('po')" data-p="po">📄 Purchase Orders</div>
+      <div class="nav-tab" onclick="App.setPage('invoice')" data-p="invoice">🧾 Invoices</div>
+      <div class="nav-tab" onclick="App.setPage('dn')" data-p="dn">📦 Delivery Notes</div>
+      <div class="nav-tab" onclick="App.setPage('vendors')" data-p="vendors">🏢 Vendors</div>
+      <div class="nav-tab" onclick="App.setPage('pipeline')" data-p="pipeline">🔄 Pipeline</div>
+      <div class="nav-tab" id="admin-tab" onclick="App.setPage('admin')" data-p="admin" style="display:none">🔐 Admin</div>
+    </div>
+    <div class="topbar-right">
+      <div class="fx-bar" id="fx-bar">Loading rates...</div>
+      <div class="user-chip" id="user-chip">👤 —</div>
+      <button class="btn btn-sm" onclick="Auth.logout()">Sign out</button>
+    </div>
+  </nav>
+  <div class="page" id="page"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- SCRIPTS — order matters -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/vendors.js"></script>
+<script src="js/pr.js"></script>
+<script src="js/rfq.js"></script>
+<script src="js/po.js"></script>
+<script src="js/invoice.js"></script>
+<script src="js/dn.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

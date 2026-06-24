@@ -35,6 +35,23 @@ const App = {
   setPage(p) {
     App.currentPage = p;
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.p === p));
+    const titles = {
+      dashboard: ['Dashboard', 'Operations overview'],
+      pr: ['Purchase Requests', 'Create and track requisitions'],
+      rfq: ['RFQ & Quotes', 'Vendor quotes and comparisons'],
+      po: ['Purchase Orders', 'Approved orders and follow-up'],
+      invoice: ['Invoices', 'Invoice verification and payment'],
+      dn: ['Delivery Notes', 'Goods received and delivery tracking'],
+      vendors: ['Vendor Database', 'Supplier profile and service coverage'],
+      pipeline: ['Pipeline', 'Live workflow across statuses'],
+      settings: ['Settings', 'Company and vessel defaults'],
+      admin: ['Admin', 'User approvals and access']
+    };
+    const [title, sub] = titles[p] || ['Dashboard', 'Operations overview'];
+    const topTitle = document.getElementById('topbar-title');
+    const topSub = document.getElementById('topbar-sub');
+    if (topTitle) topTitle.textContent = title;
+    if (topSub) topSub.textContent = sub;
     App.renderPage();
   },
 

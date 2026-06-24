@@ -1,49 +1,85 @@
 // js/vendors.js
 const Vendors = {
-  filterText: '',
+  filters: { text: '', location: '', service: '' },
+  allVendors: [],
 
-  setFilter(value) {
-    Vendors.filterText = value;
-    App.renderPage();
+  applyFilters() {
+    const filtered = (Vendors.allVendors || []).filter(v => {
+      const text = Vendors.filters.text.toLowerCase();
+      const location = Vendors.filters.location.toLowerCase();
+      const service = Vendors.filters.service.toLowerCase();
+      const haystack = [
+        v.name,
+        v.country,
+        v.port,
+        v.contact_person,
+        v.currency,
+        v.payment_terms,
+        v.notes,
+        (v.categories || []).join(' ')
+      ].join(' ').toLowerCase();
+      const matchesText = !text || haystack.includes(text);
+      const matchesLocation = !location || [v.country, v.port].join(' ').toLowerCase().includes(location);
+      const matchesService = !service || (v.categories || []).some(c => c.toLowerCase().includes(service)) || (v.notes || '').toLowerCase().includes(service);
+      return matchesText && matchesLocation && matchesService;
+    });
+    const grid = document.getElementById('vendor-grid');
+    if (grid) {
+      grid.innerHTML = filtered.map(v => `
+        <div class="vendor-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div><div class="vendor-name">${v.name}</div><div class="vendor-sub">${v.country || '—'} · ${v.currency || 'USD'}</div></div>
+            <div style="display:flex;gap:4px">
+              <button class="icon-btn" onclick="Vendors.edit('${v.id}')">${U.iEdit}</button>
+              <button class="icon-btn del" onclick="Vendors.deactivate('${v.id}')">${U.iTrash}</button>
+            </div>
+          </div>
+          <div class="vendor-cats">${(v.categories || []).map(c => `<span class="badge b-blue">${c}</span>`).join('') || '<span class="cell-m" style="font-size:12px">No categories</span>'}</div>
+          <div style="display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px">
+            <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Contact</div><div>${v.contact_person || '—'}</div></div>
+            <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Rating</div><div class="rating">${U.stars(v.rating)}</div></div>
+            <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Terms</div><div>${v.payment_terms || '—'}</div></div>
+          </div>
+          ${v.email ? `<div style="margin-top:8px;font-size:12px;color:var(--blue)">✉ ${v.email}</div>` : ''}
+          ${v.phone ? `<div style="font-size:12px;color:var(--muted)">📞 ${v.phone}</div>` : ''}
+          ${v.port ? `<div style="font-size:12px;color:var(--muted)">📍 ${v.port}</div>` : ''}
+          ${v.notes ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">${v.notes}</div>` : ''}
+        </div>`).join('') || '<div class="empty">No vendors matched the current filters.</div>';
+    }
   },
 
   async render(el) {
     const { data: vlist } = await sb.from('vendors').select('*').eq('active', true).order('name');
-    const filtered = (vlist || []).filter(v => {
-      const text = Vendors.filterText.toLowerCase();
-      if (!text) return true;
-      return [v.name, v.country, v.contact_person, v.currency, v.payment_terms, (v.categories || []).join(' ')].join(' ').toLowerCase().includes(text);
-    });
-    window._vendors = filtered; // cache for other modules
+    Vendors.allVendors = vlist || [];
+    window._vendors = Vendors.allVendors;
     el.innerHTML = `
     <div class="page-hdr">
-      <h2>Vendor Database</h2>
+      <div>
+        <h2>Vendor Database</h2>
+        <div class="page-sub">Filter by supplier name, location, or offered services.</div>
+      </div>
       <div class="filters">
-        <input type="search" placeholder="Search vendors..." value="${Vendors.filterText}" oninput="Vendors.setFilter(this.value)">
         <button class="btn btn-primary" onclick="Vendors.openNew()">+ Add Vendor</button>
       </div>
     </div>
-    <div class="vendor-grid">
-      ${(filtered || []).map(v => `
-      <div class="vendor-card">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start">
-          <div><div class="vendor-name">${v.name}</div><div class="vendor-sub">${v.country || '—'} · ${v.currency || 'USD'}</div></div>
-          <div style="display:flex;gap:4px">
-            <button class="icon-btn" onclick="Vendors.edit('${v.id}')">${U.iEdit}</button>
-            <button class="icon-btn del" onclick="Vendors.deactivate('${v.id}')">${U.iTrash}</button>
-          </div>
+    <div class="card filters-card">
+      <div class="filter-row">
+        <div class="form-group compact">
+          <label>Supplier Name</label>
+          <input type="search" placeholder="Search by name" value="${Vendors.filters.text}" oninput="Vendors.filters.text=this.value; Vendors.applyFilters()">
         </div>
-        <div class="vendor-cats">${(v.categories || []).map(c => `<span class="badge b-blue">${c}</span>`).join('') || '<span class="cell-m" style="font-size:12px">No categories</span>'}</div>
-        <div style="display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px">
-          <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Contact</div><div>${v.contact_person || '—'}</div></div>
-          <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Rating</div><div class="rating">${U.stars(v.rating)}</div></div>
-          <div><div class="cell-m" style="font-size:10px;text-transform:uppercase">Terms</div><div>${v.payment_terms || '—'}</div></div>
+        <div class="form-group compact">
+          <label>Location</label>
+          <input type="text" placeholder="Country or port" value="${Vendors.filters.location}" oninput="Vendors.filters.location=this.value; Vendors.applyFilters()">
         </div>
-        ${v.email ? `<div style="margin-top:8px;font-size:12px;color:var(--blue)">✉ ${v.email}</div>` : ''}
-        ${v.phone ? `<div style="font-size:12px;color:var(--muted)">📞 ${v.phone}</div>` : ''}
-        ${v.notes ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">${v.notes}</div>` : ''}
-      </div>`).join('') || '<div class="empty">No vendors matched the current filter.</div>'}
-    </div>`;
+        <div class="form-group compact">
+          <label>Services / Spares</label>
+          <input type="text" placeholder="e.g. Engines" value="${Vendors.filters.service}" oninput="Vendors.filters.service=this.value; Vendors.applyFilters()">
+        </div>
+      </div>
+    </div>
+    <div class="vendor-grid" id="vendor-grid"></div>`;
+    Vendors.applyFilters();
   },
 
   _form(v = {}) {

@@ -53,9 +53,15 @@
 </div>
 
 <!-- MAIN APP -->
-<div id="app" style="display:none">
-  <nav class="topbar">
-    <div class="brand">⚓ MarineProc</div>
+<div id="app" style="display:none" class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">⚓</div>
+      <div>
+        <div class="brand-title">MarineProc</div>
+        <div class="brand-sub">Purchase Control</div>
+      </div>
+    </div>
     <div class="nav-tabs" id="nav-tabs">
       <div class="nav-tab active" onclick="App.setPage('dashboard')" data-p="dashboard">📊 Dashboard</div>
       <div class="nav-tab" onclick="App.setPage('pr')" data-p="pr">📋 Purchase Requests</div>
@@ -68,12 +74,21 @@
       <div class="nav-tab" onclick="App.setPage('settings')" data-p="settings">⚙️ Settings</div>
       <div class="nav-tab" id="admin-tab" onclick="App.setPage('admin')" data-p="admin" style="display:none">🔐 Admin</div>
     </div>
-    <div class="topbar-right">
-      <div class="user-chip" id="user-chip">👤 —</div>
-      <button class="btn btn-sm" onclick="Auth.logout()">Sign out</button>
-    </div>
-  </nav>
-  <div class="page" id="page"></div>
+    <div class="sidebar-footer">Marine procurement workspace</div>
+  </aside>
+  <div class="main-shell">
+    <header class="topbar">
+      <div>
+        <div class="topbar-title" id="topbar-title">Dashboard</div>
+        <div class="topbar-sub" id="topbar-sub">Operations overview</div>
+      </div>
+      <div class="topbar-right">
+        <div class="user-chip" id="user-chip">👤 —</div>
+        <button class="btn btn-sm" onclick="Auth.logout()">Sign out</button>
+      </div>
+    </header>
+    <div class="page" id="page"></div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>

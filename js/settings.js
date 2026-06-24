@@ -13,17 +13,22 @@
 // );
 
 const Settings = {
-  state: { vessels: [], company: {} },
+  state: { vessels: [], company: {}, editingVesselId: null, vesselForm: {} },
 
   async loadVessels() {
+    const local = JSON.parse(localStorage.getItem('mp_vessels_local') || '[]');
+    Settings.state.vessels = local;
+    App.vessels = Settings.state.vessels;
     if (!sb) return;
     try {
       const { data } = await sb.from('vessels').select('*').eq('active', true).order('name');
-      Settings.state.vessels = data || [];
-      App.vessels = Settings.state.vessels;
+      if (Array.isArray(data) && data.length) {
+        Settings.state.vessels = data;
+        localStorage.setItem('mp_vessels_local', JSON.stringify(data));
+        App.vessels = Settings.state.vessels;
+      }
     } catch (err) {
       console.error('Error loading vessels', err);
-      Settings.state.vessels = [];
     }
   },
 
@@ -39,6 +44,8 @@ const Settings = {
   async render(el) {
     await Settings.loadVessels();
     const company = Settings._loadCompany();
+    const form = Settings.state.vesselForm || {};
+    const editingId = Settings.state.editingVesselId;
     el.innerHTML = `
     <div class="page-hdr">
       <div>
@@ -65,16 +72,17 @@ const Settings = {
       <div class="settings-card">
         <div class="section-lbl">Vessel management</div>
         <div class="form-row">
-          <div class="form-group"><label>Vessel Name</label><input id="set-vessel-name" placeholder="e.g. MV Ocean Star"></div>
-          <div class="form-group"><label>IMO</label><input id="set-vessel-imo" placeholder="1234567"></div>
+          <div class="form-group"><label>Vessel Name</label><input id="set-vessel-name" value="${form.name || ''}" placeholder="e.g. MV Ocean Star"></div>
+          <div class="form-group"><label>IMO</label><input id="set-vessel-imo" value="${form.imo || ''}" placeholder="1234567"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Registration No.</label><input id="set-vessel-reg" placeholder="SG-001"></div>
-          <div class="form-group"><label>Flag</label><input id="set-vessel-flag" placeholder="Singapore"></div>
+          <div class="form-group"><label>Registration No.</label><input id="set-vessel-reg" value="${form.registration_no || ''}" placeholder="SG-001"></div>
+          <div class="form-group"><label>Flag</label><input id="set-vessel-flag" value="${form.flag || ''}" placeholder="Singapore"></div>
         </div>
-        <div class="form-group"><label>Notes</label><textarea id="set-vessel-notes" placeholder="Operational notes"></textarea></div>
+        <div class="form-group"><label>Notes</label><textarea id="set-vessel-notes" placeholder="Operational notes">${form.notes || ''}</textarea></div>
         <div class="settings-actions">
-          <button class="btn btn-primary" onclick="Settings.saveVessel()">Add Vessel</button>
+          ${editingId ? `<button class="btn" onclick="Settings.resetVesselForm()">Cancel</button>` : ''}
+          <button class="btn btn-primary" onclick="Settings.saveVessel()">${editingId ? 'Update Vessel' : 'Add Vessel'}</button>
         </div>
         <div class="vessel-list">
           ${(Settings.state.vessels || []).map(v => `
@@ -109,7 +117,8 @@ const Settings = {
     U.toast('Company settings saved', 'ok');
   },
 
-  async saveVessel(id) {
+  async saveVessel() {
+    const id = Settings.state.editingVesselId;
     const payload = {
       name: document.getElementById('set-vessel-name').value.trim(),
       imo: document.getElementById('set-vessel-imo').value.trim(),
@@ -121,36 +130,68 @@ const Settings = {
     };
     if (!payload.name) { U.toast('Vessel name required', 'err'); return; }
     try {
-      if (id) {
+      if (sb && id) {
         await sb.from('vessels').update(payload).eq('id', id);
-      } else {
+      } else if (sb) {
         await sb.from('vessels').insert(payload);
+      } else {
+        const list = [...Settings.state.vessels];
+        const next = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), ...payload };
+        list.push(next);
+        localStorage.setItem('mp_vessels_local', JSON.stringify(list));
+        Settings.state.vessels = list;
       }
-      await Settings.loadVessels();
+      if (id && sb) {
+        await Settings.loadVessels();
+      } else if (!id) {
+        await Settings.loadVessels();
+      }
+      Settings.resetVesselForm();
       U.toast(id ? 'Vessel updated' : 'Vessel added', 'ok');
       App.renderPage();
     } catch (err) {
       console.error(err);
-      U.toast('Unable to save vessel', 'err');
+      const list = [...Settings.state.vessels];
+      const next = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), ...payload };
+      list.push(next);
+      localStorage.setItem('mp_vessels_local', JSON.stringify(list));
+      Settings.state.vessels = list;
+      Settings.resetVesselForm();
+      U.toast('Vessel saved locally', 'ok');
+      App.renderPage();
     }
   },
 
   async editVessel(id) {
     const vessel = (Settings.state.vessels || []).find(v => v.id === id);
     if (!vessel) return;
-    document.getElementById('set-vessel-name').value = vessel.name || '';
-    document.getElementById('set-vessel-imo').value = vessel.imo || '';
-    document.getElementById('set-vessel-reg').value = vessel.registration_no || '';
-    document.getElementById('set-vessel-flag').value = vessel.flag || '';
-    document.getElementById('set-vessel-notes').value = vessel.notes || '';
+    Settings.state.editingVesselId = id;
+    Settings.state.vesselForm = {
+      name: vessel.name || '',
+      imo: vessel.imo || '',
+      registration_no: vessel.registration_no || '',
+      flag: vessel.flag || '',
+      notes: vessel.notes || ''
+    };
+    App.renderPage();
     U.toast('Vessel details loaded for editing', 'ok');
+  },
+
+  resetVesselForm() {
+    Settings.state.editingVesselId = null;
+    Settings.state.vesselForm = {};
   },
 
   async deleteVessel(id) {
     if (!confirm('Remove this vessel from the active registry?')) return;
     try {
-      await sb.from('vessels').update({ active: false }).eq('id', id);
-      await Settings.loadVessels();
+      if (sb) {
+        await sb.from('vessels').update({ active: false }).eq('id', id);
+      }
+      const list = (Settings.state.vessels || []).filter(v => v.id !== id);
+      Settings.state.vessels = list;
+      localStorage.setItem('mp_vessels_local', JSON.stringify(list));
+      App.vessels = Settings.state.vessels;
       U.toast('Vessel removed', 'ok');
       App.renderPage();
     } catch (err) {

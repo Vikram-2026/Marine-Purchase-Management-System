@@ -13,7 +13,74 @@
 // );
 
 const Settings = {
-  state: { vessels: [], company: {}, editingVesselId: null, vesselForm: {} },
+  state: {
+    vessels: [],
+    company: {},
+    editingVesselId: null,
+    vesselForm: {},
+    dropdowns: {},
+    activeDropdownKey: 'pr_request_type',
+    editingDropdownValue: null,
+    budgets: {}
+  },
+
+  _defaultDropdowns() {
+    return {
+      pr_request_type: ['Spare Parts','Stores','Safety Equipment','Provision','Repair & Maintenance','Dry Dock','Survey','Other'],
+      pr_department: ['Deck','Engine','Electrical','Safety','Galley','Operations','Office'],
+      pr_category: [...CATEGORIES],
+      pr_unit: ['pcs','set','ltr','kg','m','box','each','pair','lot'],
+      vendor_services: ['Deck Stores','Engine Stores','Spare Parts','Safety Equipment','Provisions','Electrical','Hydraulic','Navigation','Accommodation','Medical'],
+      priority: ['Normal','Urgent','Critical']
+    };
+  },
+
+  loadDropdowns() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('mp_dropdowns') || '{}');
+      Settings.state.dropdowns = { ...Settings._defaultDropdowns(), ...saved };
+    } catch {
+      Settings.state.dropdowns = Settings._defaultDropdowns();
+    }
+    return Settings.state.dropdowns;
+  },
+
+  dropdownOptions(key, fallback = []) {
+    Settings.loadDropdowns();
+    const values = Settings.state.dropdowns?.[key];
+    return Array.isArray(values) && values.length ? values : fallback;
+  },
+
+  loadBudgets() {
+    try {
+      Settings.state.budgets = JSON.parse(localStorage.getItem('mp_vessel_budgets') || '{}');
+    } catch {
+      Settings.state.budgets = {};
+    }
+    return Settings.state.budgets;
+  },
+
+  saveVesselBudget() {
+    const vesselId = document.getElementById('budget-vessel').value;
+    const month = document.getElementById('budget-month').value || new Date().toISOString().slice(0, 7);
+    const amount = parseFloat(document.getElementById('budget-amount').value);
+    if (!vesselId || !amount) { U.toast('Select a vessel and enter a budget', 'err'); return; }
+    const key = `${vesselId}::${month}`;
+    const next = { ...Settings.loadBudgets(), [key]: amount };
+    Settings.state.budgets = next;
+    localStorage.setItem('mp_vessel_budgets', JSON.stringify(next));
+    U.toast('Monthly budget saved', 'ok');
+    App.renderPage();
+  },
+
+  removeVesselBudget(key) {
+    const next = { ...Settings.loadBudgets() };
+    delete next[key];
+    Settings.state.budgets = next;
+    localStorage.setItem('mp_vessel_budgets', JSON.stringify(next));
+    U.toast('Budget removed', 'ok');
+    App.renderPage();
+  },
 
   async loadVessels() {
     const local = JSON.parse(localStorage.getItem('mp_vessels_local') || '[]');
@@ -43,9 +110,18 @@ const Settings = {
 
   async render(el) {
     await Settings.loadVessels();
+    Settings.loadDropdowns();
+    Settings.loadBudgets();
     const company = Settings._loadCompany();
     const form = Settings.state.vesselForm || {};
     const editingId = Settings.state.editingVesselId;
+    const activeKey = Settings.state.activeDropdownKey;
+    const values = Settings.state.dropdowns?.[activeKey] || [];
+    const budgetEntries = Object.entries(Settings.state.budgets || {}).map(([key, amount]) => {
+      const [vesselId, month] = key.split('::');
+      const vessel = (Settings.state.vessels || []).find(v => v.id === vesselId);
+      return { key, month, vesselName: vessel?.name || '—', amount };
+    }).sort((a, b) => (a.month > b.month ? -1 : 1));
     el.innerHTML = `
     <div class="page-hdr">
       <div>
@@ -101,6 +177,51 @@ const Settings = {
           `).join('') || '<div class="empty">No vessels saved yet.</div>'}
         </div>
       </div>
+    </div>
+    <div class="settings-card" style="margin-top:16px">
+      <div class="section-lbl">Dropdown lists</div>
+      <div class="form-row">
+        <div class="form-group"><label>Field</label><select id="dd-field" onchange="Settings.selectDropdownGroup(this.value)">${Object.keys(Settings.state.dropdowns).map(k => `<option value="${k}" ${k === activeKey ? 'selected' : ''}>${k.replace(/_/g,' ')}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Value</label><input id="dd-value" value="${Settings.state.editingDropdownValue || ''}" placeholder="Add an option"></div>
+      </div>
+      <div class="settings-actions">
+        ${Settings.state.editingDropdownValue ? `<button class="btn" onclick="Settings.cancelDropdownEdit()">Cancel</button>` : ''}
+        <button class="btn btn-primary" onclick="Settings.saveDropdownValue()">${Settings.state.editingDropdownValue ? 'Update' : 'Add'} Value</button>
+      </div>
+      <div class="vessel-list">
+        ${(values || []).map(v => `
+          <div class="vessel-row">
+            <div class="vessel-name">${v}</div>
+            <div></div><div></div>
+            <div class="td-actions">
+              <button class="icon-btn" onclick="Settings.editDropdownValue('${v}')">${U.iEdit}</button>
+              <button class="icon-btn del" onclick="Settings.deleteDropdownValue('${v}')">${U.iTrash}</button>
+            </div>
+          </div>
+        `).join('') || '<div class="empty">No values yet.</div>'}
+      </div>
+    </div>
+    <div class="settings-card" style="margin-top:16px">
+      <div class="section-lbl">Monthly vessel budgets</div>
+      <div class="form-row">
+        <div class="form-group"><label>Vessel</label><select id="budget-vessel">${(Settings.state.vessels || []).map(v => `<option value="${v.id}">${v.name}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Month</label><input type="month" id="budget-month" value="${new Date().toISOString().slice(0, 7)}"></div>
+        <div class="form-group"><label>Budget Amount</label><input type="number" id="budget-amount" placeholder="0.00"></div>
+      </div>
+      <div class="settings-actions"><button class="btn btn-primary" onclick="Settings.saveVesselBudget()">Save Budget</button></div>
+      <div class="vessel-list">
+        ${(budgetEntries || []).map(item => `
+          <div class="vessel-row">
+            <div>
+              <div class="vessel-name">${item.vesselName}</div>
+              <div class="vessel-meta">${item.month}</div>
+            </div>
+            <div><span class="vessel-chip">USD ${Number(item.amount).toLocaleString()}</span></div>
+            <div></div>
+            <div class="td-actions"><button class="icon-btn del" onclick="Settings.removeVesselBudget('${item.key}')">${U.iTrash}</button></div>
+          </div>
+        `).join('') || '<div class="empty">No monthly budgets yet.</div>'}
+      </div>
     </div>`;
   },
 
@@ -115,6 +236,50 @@ const Settings = {
     localStorage.setItem('mp_company', JSON.stringify(payload));
     Settings.state.company = payload;
     U.toast('Company settings saved', 'ok');
+  },
+
+  selectDropdownGroup(key) {
+    Settings.state.activeDropdownKey = key;
+    Settings.state.editingDropdownValue = null;
+    App.renderPage();
+  },
+
+  cancelDropdownEdit() {
+    Settings.state.editingDropdownValue = null;
+    App.renderPage();
+  },
+
+  editDropdownValue(value) {
+    Settings.state.editingDropdownValue = value;
+    App.renderPage();
+  },
+
+  saveDropdownValue() {
+    const key = Settings.state.activeDropdownKey;
+    const newValue = document.getElementById('dd-value').value.trim();
+    if (!newValue) { U.toast('Enter a dropdown value', 'err'); return; }
+    const current = Settings.state.dropdowns?.[key] || [];
+    const list = [...current];
+    if (Settings.state.editingDropdownValue) {
+      const idx = list.indexOf(Settings.state.editingDropdownValue);
+      if (idx >= 0) list[idx] = newValue;
+    } else if (!list.includes(newValue)) {
+      list.push(newValue);
+    }
+    Settings.state.dropdowns[key] = list;
+    localStorage.setItem('mp_dropdowns', JSON.stringify(Settings.state.dropdowns));
+    Settings.state.editingDropdownValue = null;
+    U.toast('Dropdown list updated', 'ok');
+    App.renderPage();
+  },
+
+  deleteDropdownValue(value) {
+    const key = Settings.state.activeDropdownKey;
+    const list = (Settings.state.dropdowns?.[key] || []).filter(v => v !== value);
+    Settings.state.dropdowns[key] = list;
+    localStorage.setItem('mp_dropdowns', JSON.stringify(Settings.state.dropdowns));
+    U.toast('Dropdown value removed', 'ok');
+    App.renderPage();
   },
 
   async saveVessel() {
@@ -148,7 +313,7 @@ const Settings = {
       }
       Settings.resetVesselForm();
       U.toast(id ? 'Vessel updated' : 'Vessel added', 'ok');
-      App.renderPage();
+      App.setPage('settings');
     } catch (err) {
       console.error(err);
       const list = [...Settings.state.vessels];
@@ -173,7 +338,7 @@ const Settings = {
       flag: vessel.flag || '',
       notes: vessel.notes || ''
     };
-    App.renderPage();
+    App.setPage('settings');
     U.toast('Vessel details loaded for editing', 'ok');
   },
 
@@ -193,7 +358,7 @@ const Settings = {
       localStorage.setItem('mp_vessels_local', JSON.stringify(list));
       App.vessels = Settings.state.vessels;
       U.toast('Vessel removed', 'ok');
-      App.renderPage();
+      App.setPage('settings');
     } catch (err) {
       console.error(err);
       U.toast('Unable to remove vessel', 'err');

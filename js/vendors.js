@@ -43,6 +43,8 @@ const Vendors = {
           ${v.email ? `<div style="margin-top:8px;font-size:12px;color:var(--blue)">✉ ${v.email}</div>` : ''}
           ${v.phone ? `<div style="font-size:12px;color:var(--muted)">📞 ${v.phone}</div>` : ''}
           ${v.port ? `<div style="font-size:12px;color:var(--muted)">📍 ${v.port}</div>` : ''}
+          ${v.document_url ? `<div style="margin-top:6px;font-size:12px"><a href="${v.document_url}" target="_blank" rel="noopener">📄 View brochure / document</a></div>` : ''}
+          ${v.document_notes ? `<div style="font-size:11px;color:var(--muted)">${v.document_notes}</div>` : ''}
           ${v.notes ? `<div style="margin-top:6px;font-size:11px;color:var(--muted)">${v.notes}</div>` : ''}
         </div>`).join('') || '<div class="empty">No vendors matched the current filters.</div>';
     }
@@ -104,6 +106,10 @@ const Vendors = {
       <select id="vn-cats" multiple style="height:95px">${CATEGORIES.map(c => `<option ${(v.categories || []).includes(c) ? 'selected' : ''}>${c}</option>`).join('')}</select>
     </div>
     <div class="form-row">
+      <div class="form-group"><label>Brochure / Document URL</label><input type="url" id="vn-doc-url" value="${v.document_url || ''}" placeholder="https://..."></div>
+      <div class="form-group"><label>Document Notes</label><input type="text" id="vn-doc-notes" value="${v.document_notes || ''}" placeholder="Brochure / spec sheet"></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><label>Rating (1–5 stars)</label><select id="vn-rating">${[1,2,3,4,5].map(n => `<option ${(v.rating || 3) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
       <div class="form-group"></div>
     </div>
@@ -139,7 +145,9 @@ const Vendors = {
       payment_terms: document.getElementById('vn-pay').value,
       categories: Array.from(document.getElementById('vn-cats').selectedOptions).map(o => o.value),
       rating: parseInt(document.getElementById('vn-rating').value) || 3,
-      notes: document.getElementById('vn-notes').value
+      notes: document.getElementById('vn-notes').value,
+      document_url: document.getElementById('vn-doc-url').value.trim(),
+      document_notes: document.getElementById('vn-doc-notes').value.trim()
     };
     if (id) {
       await sb.from('vendors').update(payload).eq('id', id);

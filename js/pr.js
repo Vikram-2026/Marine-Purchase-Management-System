@@ -27,7 +27,7 @@ const PR = {
         </div>
       </div>
       <table>
-        <thead><tr><th>Ref</th><th>Vessel</th><th>Item Summary</th><th>Line Items</th><th>Priority</th><th>Required By</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Ref</th><th>Vessel</th><th>Item Summary</th><th>Line Items</th><th>Priority</th><th>Type / Dept</th><th>Required By</th><th>Status</th><th></th></tr></thead>
         <tbody>${PR._filterRows(prs || [], licMap)}</tbody>
       </table>
     </div>`;
@@ -40,13 +40,14 @@ const PR = {
     const filtered = prs.filter(p =>
       (!fv || p.vessel_id === fv) && (!fs || p.status === fs) && (!fp || p.priority === fp)
     );
-    if (!filtered.length) return '<tr><td colspan="8" class="empty-row">No PRs found.</td></tr>';
+    if (!filtered.length) return '<tr><td colspan="9" class="empty-row">No PRs found.</td></tr>';
     return filtered.map(p => `<tr>
       <td class="cell-p">${p.ref}</td>
       <td class="cell-m">${U.vname(p.vessel_id)}</td>
       <td>${p.item}</td>
       <td><span class="badge b-blue">${licMap[p.id] || 0} items</span></td>
       <td>${U.badge(p.priority)}</td>
+      <td class="cell-m">${PR._meta(p.remarks).request_type || '—'} / ${PR._meta(p.remarks).department || '—'}</td>
       <td class="cell-m">${U.fmt(p.required_by)}</td>
       <td>${U.badge(p.status)}</td>
       <td><div class="td-actions">
@@ -58,21 +59,44 @@ const PR = {
   },
 
   _vesselOpts() { return App.vessels.map(v => `<option value="${v.id}">${v.name}</option>`).join(''); },
-  _catOpts(sel) { return CATEGORIES.map(c => `<option ${c === sel ? 'selected' : ''}>${c}</option>`).join(''); },
+  _dropdownOpts(key, sel, fallback = []) { return Settings.dropdownOptions(key, fallback).map(c => `<option ${c === sel ? 'selected' : ''}>${c}</option>`).join(''); },
+  _catOpts(sel) { return PR._dropdownOpts('pr_category', sel, CATEGORIES); },
+  _meta(text = '') {
+    const meta = {};
+    (text || '').split('|').map(x => x.trim()).filter(Boolean).forEach(s => {
+      const idx = s.indexOf(':');
+      if (idx > 0) {
+        const k = s.slice(0, idx).trim().toLowerCase().replace(/\s+/g, '_');
+        const v = s.slice(idx + 1).trim();
+        if (k && v) meta[k] = v;
+      }
+    });
+    return meta;
+  },
 
   openNew() {
     PR._liCount = 1;
     U.modal(`
     <div class="modal-hdr"><h3>New Purchase Request</h3><button class="icon-btn" onclick="U.closeModal()">${U.iX}</button></div>
     <div class="modal-body">
+      <div class="info-box">Approval route: Vessel → TSI → FM</div>
       <div class="form-row">
         <div class="form-group"><label>Vessel *</label><select id="pr-v"><option value="">Select</option>${PR._vesselOpts()}</select></div>
-        <div class="form-group"><label>Priority</label><select id="pr-pri"><option>Normal</option><option>Urgent</option><option>Critical</option></select></div>
+        <div class="form-group"><label>Request Type</label><select id="pr-type">${PR._dropdownOpts('pr_request_type', '', ['Spare Parts'])}</select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Department</label><select id="pr-dept">${PR._dropdownOpts('pr_department', '', ['Engine'])}</select></div>
+        <div class="form-group"><label>Priority</label><select id="pr-pri">${PR._dropdownOpts('priority', 'Normal', ['Normal','Urgent','Critical'])}</select></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label>Required By (onboard)</label><input type="date" id="pr-rb"></div>
-        <div class="form-group"><label>Requested By</label><input type="text" id="pr-req" value="Chief Officer"></div>
+        <div class="form-group"><label>Raised By (Vessel)</label><input type="text" id="pr-req" value="Vessel Office"></div>
       </div>
+      <div class="form-row">
+        <div class="form-group"><label>Budget Code / Cost Center</label><input type="text" id="pr-budget" placeholder="e.g. ENG-001"></div>
+        <div class="form-group"><label>Supplier Preference</label><input type="text" id="pr-supp" placeholder="Optional"></div>
+      </div>
+      <div class="form-group"><label>Justification / Purpose</label><textarea id="pr-purpose" placeholder="Explain the operational need..."></textarea></div>
       <div class="section-lbl">Line Items</div>
       <div style="overflow-x:auto">
         <table class="li-table" id="li-tbl">
@@ -128,12 +152,21 @@ const PR = {
     if (!items.length) { U.toast('Add at least one line item', 'err'); return; }
     const ref = await U.nextRef('purchase_requests', 'PR');
     const summary = items.slice(0, 3).map(i => i.description).join(', ') + (items.length > 3 ? ` + ${items.length - 3} more` : '');
+    const extraMeta = [
+      `Request Type: ${document.getElementById('pr-type').value || ''}`,
+      `Department: ${document.getElementById('pr-dept').value || ''}`,
+      `Budget Code: ${document.getElementById('pr-budget').value || ''}`,
+      `Supplier Preference: ${document.getElementById('pr-supp').value || ''}`,
+      `Purpose: ${document.getElementById('pr-purpose').value || ''}`,
+      `Approval Route: Vessel → TSI → FM`
+    ].filter(x => x.includes(':') && x.split(':')[1].trim());
+    const remarks = [document.getElementById('pr-rem').value, extraMeta.join(' | ')].filter(Boolean).join(' | ');
     const { data: pr, error } = await sb.from('purchase_requests').insert({
       ref, vessel_id, item: summary, category: items[0].category,
       priority: document.getElementById('pr-pri').value,
       required_by: document.getElementById('pr-rb').value || null,
       requester: document.getElementById('pr-req').value,
-      remarks: document.getElementById('pr-rem').value,
+      remarks,
       status: 'Pending RFQ'
     }).select().single();
     if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
@@ -152,10 +185,11 @@ const PR = {
         <div><div class="cell-m">Vessel</div><div style="font-weight:500">${U.vname(p.vessel_id)}</div></div>
         <div><div class="cell-m">Priority</div><div>${U.badge(p.priority)}</div></div>
         <div><div class="cell-m">Status</div><div>${U.badge(p.status)}</div></div>
-        <div><div class="cell-m">Requested By</div><div>${p.requester || '—'}</div></div>
+        <div><div class="cell-m">Raised By</div><div>${p.requester || '—'}</div></div>
         <div><div class="cell-m">Required By</div><div>${U.fmt(p.required_by)}</div></div>
         <div><div class="cell-m">Created</div><div>${U.fmt(p.created_at?.slice(0, 10))}</div></div>
       </div>
+      <div class="info-box">Approval route: Vessel → TSI → FM</div>
       ${p.remarks ? `<div class="info-box">${p.remarks}</div>` : ''}
       <div class="section-lbl">Line Items (${items?.length || 0})</div>
       <div style="overflow-x:auto">
@@ -185,23 +219,41 @@ const PR = {
         <div class="form-group"><label>Status</label><select id="ep-s">${PR_STATUSES.map(s => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>Priority</label><select id="ep-pri"><option ${p.priority==='Normal'?'selected':''}>Normal</option><option ${p.priority==='Urgent'?'selected':''}>Urgent</option><option ${p.priority==='Critical'?'selected':''}>Critical</option></select></div>
+        <div class="form-group"><label>Request Type</label><select id="ep-type">${PR._dropdownOpts('pr_request_type', PR._meta(p.remarks).request_type || '', ['Spare Parts'])}</select></div>
+        <div class="form-group"><label>Department</label><select id="ep-dept">${PR._dropdownOpts('pr_department', PR._meta(p.remarks).department || '', ['Engine'])}</select></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Priority</label><select id="ep-pri">${PR._dropdownOpts('priority', p.priority || 'Normal', ['Normal','Urgent','Critical'])}</select></div>
         <div class="form-group"><label>Required By</label><input type="date" id="ep-rb" value="${p.required_by || ''}"></div>
       </div>
-      <div class="form-group"><label>Requested By</label><input type="text" id="ep-req" value="${p.requester || ''}"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Budget Code / Cost Center</label><input type="text" id="ep-budget" value="${PR._meta(p.remarks).budget_code || ''}"></div>
+        <div class="form-group"><label>Supplier Preference</label><input type="text" id="ep-supp" value="${PR._meta(p.remarks).supplier_preference || ''}"></div>
+      </div>
+      <div class="form-group"><label>Raised By (Vessel)</label><input type="text" id="ep-req" value="${p.requester || ''}"></div>
+      <div class="form-group"><label>Justification / Purpose</label><textarea id="ep-purpose">${PR._meta(p.remarks).purpose || ''}</textarea></div>
       <div class="form-group"><label>Remarks</label><textarea id="ep-rem">${p.remarks || ''}</textarea></div>
     </div>
     <div class="modal-ftr"><button class="btn" onclick="U.closeModal()">Cancel</button><button class="btn btn-primary" onclick="PR._doEdit('${id}')">Update</button></div>`);
   },
 
   async _doEdit(id) {
+    const extraMeta = [
+      `Request Type: ${document.getElementById('ep-type').value || ''}`,
+      `Department: ${document.getElementById('ep-dept').value || ''}`,
+      `Budget Code: ${document.getElementById('ep-budget').value || ''}`,
+      `Supplier Preference: ${document.getElementById('ep-supp').value || ''}`,
+      `Purpose: ${document.getElementById('ep-purpose').value || ''}`,
+      `Approval Route: Vessel → TSI → FM`
+    ].filter(x => x.includes(':') && x.split(':')[1].trim());
+    const remarks = [document.getElementById('ep-rem').value, extraMeta.join(' | ')].filter(Boolean).join(' | ');
     const { error } = await sb.from('purchase_requests').update({
       vessel_id: document.getElementById('ep-v').value,
       status: document.getElementById('ep-s').value,
       priority: document.getElementById('ep-pri').value,
       required_by: document.getElementById('ep-rb').value || null,
       requester: document.getElementById('ep-req').value,
-      remarks: document.getElementById('ep-rem').value
+      remarks
     }).eq('id', id);
     if (error) { U.toast('Update failed', 'err'); return; }
     U.toast('PR updated', 'ok'); U.closeModal(); App.renderPage();

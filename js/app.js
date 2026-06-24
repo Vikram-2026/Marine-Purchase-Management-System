@@ -77,15 +77,41 @@ const App = {
   async renderDashboard(el) {
     const [
       { count: totalPR }, { count: pendingRFQ }, { count: totalPO },
-      { count: pendingInv }, { count: pendingDN }, { data: recentPRs }
+      { count: pendingInv }, { count: pendingDN }, { data: recentPRs },
+      { data: pos }
     ] = await Promise.all([
       sb.from('purchase_requests').select('*', { count: 'exact', head: true }),
       sb.from('purchase_requests').select('*', { count: 'exact', head: true }).eq('status', 'Pending RFQ'),
       sb.from('purchase_orders').select('*', { count: 'exact', head: true }),
       sb.from('invoices').select('*', { count: 'exact', head: true }).in('status', ['Received', 'Verified']),
       sb.from('purchase_requests').select('*', { count: 'exact', head: true }).eq('status', 'PO Raised'),
-      sb.from('purchase_requests').select('*').order('created_at', { ascending: false }).limit(8)
+      sb.from('purchase_requests').select('*').order('created_at', { ascending: false }).limit(8),
+      sb.from('purchase_orders').select('amount,currency,po_date, purchase_requests(vessel_id)').order('po_date', { ascending: false })
     ]);
+
+    const budgets = JSON.parse(localStorage.getItem('mp_vessel_budgets') || '{}');
+    const month = new Date().toISOString().slice(0, 7);
+    const actualByKey = {};
+    (pos || []).forEach(po => {
+      const vesselId = po.purchase_requests?.vessel_id;
+      const poMonth = po.po_date?.slice(0, 7);
+      if (!vesselId || !poMonth) return;
+      const usd = U.toUSD(po.amount, po.currency || 'USD');
+      const key = `${vesselId}::${poMonth}`;
+      actualByKey[key] = (actualByKey[key] || 0) + usd;
+    });
+    const budgetRows = (App.vessels || []).map(v => {
+      const key = `${v.id}::${month}`;
+      const budget = Number(budgets[key] || 0);
+      const actual = Number(actualByKey[key] || 0);
+      return {
+        vessel: v.name,
+        budget,
+        actual,
+        variance: budget - actual,
+        pct: budget ? Math.round((actual / budget) * 100) : 0
+      };
+    }).filter(r => r.budget || r.actual);
 
     el.innerHTML = `
     <div class="page-hdr">
@@ -101,6 +127,22 @@ const App = {
       <div class="stat-card"><div class="stat-label">Purchase Orders</div><div class="stat-num c-teal">${totalPO || 0}</div></div>
       <div class="stat-card"><div class="stat-label">Invoices Pending</div><div class="stat-num c-red">${pendingInv || 0}</div></div>
       <div class="stat-card"><div class="stat-label">DN Awaited</div><div class="stat-num c-muted">${pendingDN || 0}</div></div>
+    </div>
+    <div class="tcard" style="margin-top:16px">
+      <div class="tcard-hdr">
+        <span style="font-weight:600;font-size:13px">Monthly Budget vs Actual (${month})</span>
+      </div>
+      <table>
+        <thead><tr><th>Vessel</th><th>Budget</th><th>Actual</th><th>Variance</th><th>Utilization</th></tr></thead>
+        <tbody>${budgetRows.length ? budgetRows.map(r => `
+          <tr>
+            <td>${r.vessel}</td>
+            <td>USD ${r.budget.toLocaleString()}</td>
+            <td>USD ${r.actual.toLocaleString()}</td>
+            <td style="color:${r.variance >= 0 ? 'var(--teal)' : 'var(--red)'}">${r.variance >= 0 ? '+' : ''}USD ${r.variance.toLocaleString()}</td>
+            <td>${r.pct}%</td>
+          </tr>`).join('') : '<tr><td colspan="5" class="empty-row">No budget or spend data for this month yet.</td></tr>'}</tbody>
+      </table>
     </div>
     <div class="tcard">
       <div class="tcard-hdr">

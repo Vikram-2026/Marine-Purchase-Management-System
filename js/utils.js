@@ -1,6 +1,93 @@
 // js/utils.js — shared helpers used by all modules
 
 const U = {
+  localKey(table) { return `mp_${table}`; },
+  readLocal(table, fallback = []) {
+    try {
+      const raw = localStorage.getItem(U.localKey(table));
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  writeLocal(table, data) {
+    localStorage.setItem(U.localKey(table), JSON.stringify(data));
+    return data;
+  },
+  addLocal(table, payload) {
+    const rows = U.readLocal(table, []);
+    const item = {
+      id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+      created_at: new Date().toISOString(),
+      ...payload
+    };
+    rows.push(item);
+    U.writeLocal(table, rows);
+    return item;
+  },
+  updateLocal(table, id, payload) {
+    const rows = U.readLocal(table, []);
+    const idx = rows.findIndex(r => r.id === id);
+    if (idx < 0) return null;
+    rows[idx] = { ...rows[idx], ...payload };
+    U.writeLocal(table, rows);
+    return rows[idx];
+  },
+  deleteLocal(table, id) {
+    const rows = U.readLocal(table, []).filter(r => r.id !== id);
+    U.writeLocal(table, rows);
+    return rows;
+  },
+  ensureSeedData() {
+    const users = U.readLocal('users', []);
+    if (!users.length) {
+      U.writeLocal('users', [{
+        id: 'local-admin',
+        full_name: 'Admin User',
+        username: 'admin',
+        password_hash: 'admin123',
+        role: 'Admin',
+        status: 'Active',
+        created_at: new Date().toISOString()
+      }]);
+    }
+    const vessels = U.readLocal('vessels', []);
+    if (!vessels.length) {
+      U.writeLocal('vessels', [{
+        id: 'local-vessel-1',
+        name: 'MV Ocean Star',
+        imo: '1234567',
+        registration_no: 'SG-001',
+        flag: 'Singapore',
+        status: 'Active',
+        notes: 'Demo vessel',
+        active: true,
+        created_at: new Date().toISOString()
+      }]);
+    }
+    const vendors = U.readLocal('vendors', []);
+    if (!vendors.length) {
+      U.writeLocal('vendors', [{
+        id: 'local-vendor-1',
+        name: 'Marine Parts Ltd',
+        country: 'Singapore',
+        contact_person: 'Ravi',
+        email: 'sales@marineparts.com',
+        phone: '+65 9000 0000',
+        port: 'Singapore',
+        currency: 'USD',
+        payment_terms: 'Net 30',
+        categories: ['Spare Parts', 'Engine Stores'],
+        rating: 4,
+        notes: 'Demo vendor',
+        document_url: '',
+        document_notes: '',
+        active: true,
+        created_at: new Date().toISOString()
+      }]);
+    }
+  },
+
   // ── FORMAT ──
   fmt(d) {
     if (!d) return '—';
@@ -58,12 +145,13 @@ const U = {
 
   // ── DB HELPERS ──
   async nextRef(table, prefix) {
-    const { count } = await sb.from(table).select('*', { count: 'exact', head: true });
-    return `${prefix}-${new Date().getFullYear()}-${String((count || 0) + 1).padStart(3, '0')}`;
+    const rows = U.readLocal(table, []);
+    return `${prefix}-${new Date().getFullYear()}-${String((rows.length || 0) + 1).padStart(3, '0')}`;
   },
 
   // ── FILE UPLOAD ──
   async uploadFile(file, folder, id) {
+    if (!sb?.storage) return null;
     const path = `${folder}/${id}/${Date.now()}_${file.name}`;
     const { error } = await sb.storage.from('purchase-docs').upload(path, file);
     if (!error) return path;
@@ -72,29 +160,81 @@ const U = {
   },
 
   async fileUrl(path) {
+    if (!sb?.storage) return null;
     const { data } = await sb.storage.from('purchase-docs').createSignedUrl(path, 3600);
     return data?.signedUrl || null;
+  },
+
+  _fallbackParseText(content, mode) {
+    if (mode !== 'pr') return [];
+    const text = (content || '').replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    const lines = text
+      .split(/\r?\n|(?<=[.;:])\s+/)
+      .map(line => line.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .filter(line => line.length > 3 && !/purchase request|purchase requisition|date|department|requested by|raised by|approval route|remarks/i.test(line));
+    if (!lines.length) {
+      return [{
+        item_no: 1,
+        description: text.slice(0, 160),
+        part_no: null,
+        qty: 1,
+        unit: 'pcs',
+        category: 'Spare Parts',
+        remarks: null
+      }];
+    }
+    return lines.slice(0, 8).map((line, i) => ({
+      item_no: i + 1,
+      description: line.replace(/^\d+[.)]\s*/, '').replace(/^[-*]\s*/, ''),
+      part_no: null,
+      qty: /\bqty\b|\bquantity\b|\bqty:\b/i.test(line) ? 1 : 1,
+      unit: 'pcs',
+      category: 'Spare Parts',
+      remarks: null
+    }));
+  },
+
+  async _extractWordText(file) {
+    const name = (file?.name || '').toLowerCase();
+    if (!name.endsWith('.docx')) return '';
+    try {
+      const buffer = await file.arrayBuffer();
+      if (window.mammoth && typeof window.mammoth.extractRawText === 'function') {
+        const result = await window.mammoth.extractRawText({ arrayBuffer: buffer });
+        const text = (result && result.value ? result.value : '').trim();
+        if (text) return text;
+      }
+      if (window.JSZip) {
+        const zip = await window.JSZip.loadAsync(buffer);
+        const xmlEntry = zip.file('word/document.xml');
+        if (xmlEntry) {
+          const xml = await xmlEntry.async('text');
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(xml, 'application/xml');
+          const texts = Array.from(doc.getElementsByTagName('w:t')).map(t => t.textContent || '');
+          const content = texts.join(' ').replace(/\s+/g, ' ').trim();
+          if (content) return content;
+          const bodyText = (doc.documentElement?.textContent || '').replace(/\s+/g, ' ').trim();
+          if (bodyText) return bodyText;
+        }
+      }
+    } catch (err) {
+      console.warn('Word parse failed', err);
+    }
+    return '';
   },
 
   // ── AI FILE READER ──
   async readFileAI(file, mode) {
     return new Promise(resolve => {
-      const reader = new FileReader();
-      reader.onload = async e => {
-        let content = '';
-        const name = file.name.toLowerCase();
-        if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-          try {
-            const wb = XLSX.read(e.target.result, { type: 'binary' });
-            const ws = wb.Sheets[wb.SheetNames[0]];
-            content = XLSX.utils.sheet_to_csv(ws);
-          } catch { content = 'Could not parse Excel'; }
-        } else {
-          content = e.target.result;
-        }
+      const name = file.name.toLowerCase();
+      const readAndSend = async (content) => {
         const prompt = mode === 'pr'
           ? `Extract all line items from this purchase requisition. Return ONLY a JSON array, no markdown. Each object: {item_no, description, part_no, qty, unit, category, remarks}. Categories: ${CATEGORIES.join(', ')}.\n\n${content.slice(0, 4000)}`
           : `Extract quotation line items from this supplier quote. Return ONLY a JSON array, no markdown. Each object: {item_no, description, qty, unit, unit_price, currency, delivery_time, validity, notes}.\n\n${content.slice(0, 4000)}`;
+        const fallback = U._fallbackParseText(content, mode);
         try {
           const resp = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
@@ -103,11 +243,37 @@ const U = {
           });
           const data = await resp.json();
           const text = (data.content?.[0]?.text || '[]').replace(/```json|```/g, '').trim();
-          resolve(JSON.parse(text));
-        } catch { resolve(null); }
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed) && parsed.length) {
+            resolve(parsed);
+          } else {
+            resolve(fallback.length ? fallback : null);
+          }
+        } catch {
+          resolve(fallback.length ? fallback : null);
+        }
       };
-      if (file.name.toLowerCase().match(/\.xlsx?$/)) reader.readAsBinaryString(file);
-      else reader.readAsText(file);
+
+      const handleFile = async () => {
+        let content = '';
+        try {
+          if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+            const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            content = XLSX.utils.sheet_to_csv(ws);
+          } else if (name.endsWith('.docx')) {
+            content = await U._extractWordText(file);
+            if (!content) content = 'Could not parse Word file';
+          } else {
+            content = await file.text();
+          }
+        } catch {
+          content = 'Could not read file';
+        }
+        await readAndSend(content);
+      };
+
+      handleFile();
     });
   },
 

@@ -21,7 +21,8 @@ const Settings = {
     dropdowns: {},
     activeDropdownKey: 'pr_request_type',
     editingDropdownValue: null,
-    budgets: {}
+    budgets: {},
+    connectionMode: 'local'
   },
 
   _defaultDropdowns() {
@@ -51,7 +52,23 @@ const Settings = {
     return Array.isArray(values) && values.length ? values : fallback;
   },
 
-  loadBudgets() {
+  async loadBudgets() {
+    try {
+      if (sb) {
+        const { data } = await sb.from('vessel_budgets').select('*');
+        if (Array.isArray(data)) {
+          const map = {};
+          data.forEach(b => {
+            if (b.vessel_id && b.budget_month) map[`${b.vessel_id}::${b.budget_month}`] = Number(b.budget_amount || 0);
+          });
+          Settings.state.budgets = map;
+          localStorage.setItem('mp_vessel_budgets', JSON.stringify(map));
+          return map;
+        }
+      }
+    } catch (err) {
+      console.error('Unable to load budgets from Supabase', err);
+    }
     try {
       Settings.state.budgets = JSON.parse(localStorage.getItem('mp_vessel_budgets') || '{}');
     } catch {
@@ -60,25 +77,44 @@ const Settings = {
     return Settings.state.budgets;
   },
 
-  saveVesselBudget() {
+  async saveVesselBudget() {
     const vesselId = document.getElementById('budget-vessel').value;
     const month = document.getElementById('budget-month').value || new Date().toISOString().slice(0, 7);
     const amount = parseFloat(document.getElementById('budget-amount').value);
     if (!vesselId || !amount) { U.toast('Select a vessel and enter a budget', 'err'); return; }
     const key = `${vesselId}::${month}`;
-    const next = { ...Settings.loadBudgets(), [key]: amount };
+    const next = { ...(Settings.state.budgets || {}), [key]: amount };
     Settings.state.budgets = next;
     localStorage.setItem('mp_vessel_budgets', JSON.stringify(next));
-    U.toast('Monthly budget saved', 'ok');
+    try {
+      if (sb) {
+        await sb.from('vessel_budgets').upsert({ vessel_id: vesselId, budget_month: month, budget_amount: amount, currency: 'USD' }, { onConflict: 'vessel_id,budget_month' });
+      }
+      U.toast('Monthly budget saved', 'ok');
+    } catch (err) {
+      console.error('Unable to save budget to Supabase', err);
+      U.toast('Budget saved locally', 'ok');
+    }
     App.renderPage();
   },
 
-  removeVesselBudget(key) {
-    const next = { ...Settings.loadBudgets() };
+  async removeVesselBudget(key) {
+    const next = { ...(Settings.state.budgets || {}) };
     delete next[key];
     Settings.state.budgets = next;
     localStorage.setItem('mp_vessel_budgets', JSON.stringify(next));
-    U.toast('Budget removed', 'ok');
+    try {
+      if (sb) {
+        const [vesselId, month] = key.split('::');
+        if (vesselId && month) {
+          await sb.from('vessel_budgets').delete().eq('vessel_id', vesselId).eq('budget_month', month);
+        }
+      }
+      U.toast('Budget removed', 'ok');
+    } catch (err) {
+      console.error('Unable to remove budget from Supabase', err);
+      U.toast('Budget removed locally', 'ok');
+    }
     App.renderPage();
   },
 
@@ -86,16 +122,23 @@ const Settings = {
     const local = JSON.parse(localStorage.getItem('mp_vessels_local') || '[]');
     Settings.state.vessels = local;
     App.vessels = Settings.state.vessels;
-    if (!sb) return;
+    if (!sb) {
+      Settings.state.connectionMode = 'local';
+      return;
+    }
     try {
       const { data } = await sb.from('vessels').select('*').eq('active', true).order('name');
       if (Array.isArray(data) && data.length) {
         Settings.state.vessels = data;
         localStorage.setItem('mp_vessels_local', JSON.stringify(data));
         App.vessels = Settings.state.vessels;
+        Settings.state.connectionMode = 'supabase';
+      } else {
+        Settings.state.connectionMode = 'local';
       }
     } catch (err) {
       console.error('Error loading vessels', err);
+      Settings.state.connectionMode = 'local';
     }
   },
 
@@ -111,12 +154,17 @@ const Settings = {
   async render(el) {
     await Settings.loadVessels();
     Settings.loadDropdowns();
-    Settings.loadBudgets();
+    await Settings.loadBudgets();
     const company = Settings._loadCompany();
     const form = Settings.state.vesselForm || {};
     const editingId = Settings.state.editingVesselId;
     const activeKey = Settings.state.activeDropdownKey;
     const values = Settings.state.dropdowns?.[activeKey] || [];
+    const connectionNotice = !sb
+      ? '<div class="info-box">Supabase is not configured yet. Vessel updates are being stored locally.</div>'
+      : Settings.state.connectionMode === 'local'
+        ? '<div class="warn-box">Supabase is configured, but the vessel table is not available or the connection could not be reached. Changes are being saved locally.</div>'
+        : '';
     const budgetEntries = Object.entries(Settings.state.budgets || {}).map(([key, amount]) => {
       const [vesselId, month] = key.split('::');
       const vessel = (Settings.state.vessels || []).find(v => v.id === vesselId);
@@ -131,6 +179,7 @@ const Settings = {
     </div>
     <div class="settings-grid">
       <div class="settings-card">
+        ${connectionNotice}
         <div class="section-lbl">Company profile</div>
         <div class="form-row">
           <div class="form-group"><label>Company Name</label><input id="set-company-name" value="${company.company_name || ''}" placeholder="Marine Procurement Ltd"></div>
@@ -294,36 +343,44 @@ const Settings = {
       active: true
     };
     if (!payload.name) { U.toast('Vessel name required', 'err'); return; }
+
+    const list = [...(Settings.state.vessels || [])];
+    const nextId = id || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    const localRecord = { id: nextId, ...payload };
+    const existingIndex = list.findIndex(v => v.id === id);
+    if (existingIndex >= 0) {
+      list[existingIndex] = { ...list[existingIndex], ...payload, id };
+    } else {
+      list.push(localRecord);
+    }
+    localStorage.setItem('mp_vessels_local', JSON.stringify(list));
+    Settings.state.vessels = list;
+    App.vessels = Settings.state.vessels;
+
     try {
-      if (sb && id) {
-        await sb.from('vessels').update(payload).eq('id', id);
-      } else if (sb) {
-        await sb.from('vessels').insert(payload);
-      } else {
-        const list = [...Settings.state.vessels];
-        const next = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), ...payload };
-        list.push(next);
-        localStorage.setItem('mp_vessels_local', JSON.stringify(list));
-        Settings.state.vessels = list;
-      }
-      if (id && sb) {
+      if (sb) {
+        if (id) {
+          await sb.from('vessels').update(payload).eq('id', id);
+        } else {
+          await sb.from('vessels').insert(localRecord);
+        }
+        Settings.state.connectionMode = 'supabase';
         await Settings.loadVessels();
-      } else if (!id) {
-        await Settings.loadVessels();
+        Settings.resetVesselForm();
+        U.toast(id ? 'Vessel updated' : 'Vessel added', 'ok');
+        App.setPage('settings');
+        return;
       }
+      Settings.state.connectionMode = 'local';
       Settings.resetVesselForm();
-      U.toast(id ? 'Vessel updated' : 'Vessel added', 'ok');
+      U.toast('Vessel saved locally', 'ok');
       App.setPage('settings');
     } catch (err) {
       console.error(err);
-      const list = [...Settings.state.vessels];
-      const next = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), ...payload };
-      list.push(next);
-      localStorage.setItem('mp_vessels_local', JSON.stringify(list));
-      Settings.state.vessels = list;
+      Settings.state.connectionMode = 'local';
       Settings.resetVesselForm();
-      U.toast('Vessel saved locally', 'ok');
-      App.renderPage();
+      U.toast('Saved locally — Supabase table may be missing', 'ok');
+      App.setPage('settings');
     }
   },
 

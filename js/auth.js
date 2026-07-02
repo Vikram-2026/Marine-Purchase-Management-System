@@ -19,17 +19,14 @@ const Auth = {
     if (!username || !password) { msg.textContent = 'Enter username and password'; msg.className = 'auth-msg err'; return; }
     msg.textContent = 'Signing in...';
 
-    const { data, error } = await sb.from('users')
-      .select('*')
-      .eq('username', username)
-      .eq('password_hash', password)
-      .single();
+    U.ensureSeedData();
+    const users = U.readLocal('users', []);
+    const data = users.find(u => u.username === username && u.password_hash === password);
 
-    if (error || !data) { msg.textContent = 'Invalid username or password'; msg.className = 'auth-msg err'; return; }
+    if (!data) { msg.textContent = 'Invalid username or password'; msg.className = 'auth-msg err'; return; }
     if (data.status === 'Pending') { msg.textContent = 'Your account is pending admin approval'; msg.className = 'auth-msg err'; return; }
     if (data.status === 'Suspended') { msg.textContent = 'Account suspended. Contact admin.'; msg.className = 'auth-msg err'; return; }
 
-    // Save session
     localStorage.setItem('mp_session', JSON.stringify({ id: data.id, username: data.username, full_name: data.full_name, role: data.role }));
     Auth.currentUser = data;
     App.launch(data);
@@ -48,12 +45,11 @@ const Auth = {
     if (!/^[a-z0-9._-]+$/.test(username)) { msg.textContent = 'Username: only letters, numbers, dot, underscore, hyphen'; msg.className = 'auth-msg err'; return; }
     msg.textContent = 'Submitting request...';
 
-    // Check if username taken
-    const { data: existing } = await sb.from('users').select('id').eq('username', username).single();
-    if (existing) { msg.textContent = 'Username already taken'; msg.className = 'auth-msg err'; return; }
+    U.ensureSeedData();
+    const users = U.readLocal('users', []);
+    if (users.some(u => u.username === username)) { msg.textContent = 'Username already taken'; msg.className = 'auth-msg err'; return; }
 
-    const { error } = await sb.from('users').insert({ full_name, username, password_hash: password, role, status: 'Pending' });
-    if (error) { msg.textContent = 'Failed: ' + error.message; msg.className = 'auth-msg err'; return; }
+    U.addLocal('users', { full_name, username, password_hash: password, role, status: 'Pending' });
     msg.textContent = '✓ Request submitted! Admin will approve your account.'; msg.className = 'auth-msg ok';
     document.getElementById('reg-name').value = '';
     document.getElementById('reg-user').value = '';
@@ -83,7 +79,7 @@ const Auth = {
 
   // ── ADMIN: User Management Page ──
   async renderAdmin(el) {
-    const { data: users } = await sb.from('users').select('*').order('created_at', { ascending: false });
+    const users = U.readLocal('users', []).slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     const pending = (users || []).filter(u => u.status === 'Pending');
     const others  = (users || []).filter(u => u.status !== 'Pending');
 
@@ -138,33 +134,33 @@ const Auth = {
   async approveUser(id) {
     const roleEl = document.getElementById('role-' + id);
     const role = roleEl ? roleEl.value : 'Purchase Officer';
-    await sb.from('users').update({ status: 'Active', role }).eq('id', id);
+    U.updateLocal('users', id, { status: 'Active', role });
     U.toast('User approved', 'ok');
     App.renderPage();
   },
 
   async rejectUser(id) {
     if (!confirm('Reject and delete this request?')) return;
-    await sb.from('users').delete().eq('id', id);
+    U.deleteLocal('users', id);
     U.toast('Request rejected');
     App.renderPage();
   },
 
   async suspendUser(id) {
-    await sb.from('users').update({ status: 'Suspended' }).eq('id', id);
+    U.updateLocal('users', id, { status: 'Suspended' });
     U.toast('User suspended');
     App.renderPage();
   },
 
   async activateUser(id) {
-    await sb.from('users').update({ status: 'Active' }).eq('id', id);
+    U.updateLocal('users', id, { status: 'Active' });
     U.toast('User activated', 'ok');
     App.renderPage();
   },
 
   async deleteUser(id) {
     if (!confirm('Permanently delete this user?')) return;
-    await sb.from('users').delete().eq('id', id);
+    U.deleteLocal('users', id);
     U.toast('User deleted');
     App.renderPage();
   }

@@ -5,8 +5,8 @@ const PR = {
   _importedItems: [],
 
   async render(el) {
-    const { data: prs } = await sb.from('purchase_requests').select('*').order('created_at', { ascending: false });
-    const { data: lic } = await sb.from('pr_line_items').select('pr_id');
+    const prs = U.readLocal('purchase_requests', []);
+    const lic = U.readLocal('pr_line_items', []);
     const licMap = {};
     (lic || []).forEach(l => { licMap[l.pr_id] = (licMap[l.pr_id] || 0) + 1; });
 
@@ -150,7 +150,7 @@ const PR = {
     if (!vessel_id) { U.toast('Select a vessel', 'err'); return; }
     const items = PR._collectItems();
     if (!items.length) { U.toast('Add at least one line item', 'err'); return; }
-    const ref = await U.nextRef('purchase_requests', 'PR');
+    const ref = `PR-${new Date().getFullYear()}-${String((U.readLocal('purchase_requests', []).length || 0) + 1).padStart(3, '0')}`;
     const summary = items.slice(0, 3).map(i => i.description).join(', ') + (items.length > 3 ? ` + ${items.length - 3} more` : '');
     const extraMeta = [
       `Request Type: ${document.getElementById('pr-type').value || ''}`,
@@ -161,23 +161,22 @@ const PR = {
       `Approval Route: Vessel → TSI → FM`
     ].filter(x => x.includes(':') && x.split(':')[1].trim());
     const remarks = [document.getElementById('pr-rem').value, extraMeta.join(' | ')].filter(Boolean).join(' | ');
-    const { data: pr, error } = await sb.from('purchase_requests').insert({
+    const pr = U.addLocal('purchase_requests', {
       ref, vessel_id, item: summary, category: items[0].category,
       priority: document.getElementById('pr-pri').value,
       required_by: document.getElementById('pr-rb').value || null,
       requester: document.getElementById('pr-req').value,
       remarks,
       status: 'Pending RFQ'
-    }).select().single();
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    await sb.from('pr_line_items').insert(items.map(it => ({ ...it, pr_id: pr.id })));
+    });
+    items.forEach(it => U.addLocal('pr_line_items', { ...it, pr_id: pr.id }));
     U.toast('PR saved with ' + items.length + ' items', 'ok');
     U.closeModal(); App.renderPage();
   },
 
   async view(id) {
-    const { data: p } = await sb.from('purchase_requests').select('*').eq('id', id).single();
-    const { data: items } = await sb.from('pr_line_items').select('*').eq('pr_id', id).order('item_no');
+    const p = U.readLocal('purchase_requests', []).find(x => x.id === id);
+    const items = U.readLocal('pr_line_items', []).filter(x => x.pr_id === id).sort((a, b) => (a.item_no || 0) - (b.item_no || 0));
     U.modal(`
     <div class="modal-hdr"><h3>${p.ref} — Detail</h3><button class="icon-btn" onclick="U.closeModal()">${U.iX}</button></div>
     <div class="modal-body">
@@ -210,7 +209,7 @@ const PR = {
   },
 
   async edit(id) {
-    const { data: p } = await sb.from('purchase_requests').select('*').eq('id', id).single();
+    const p = U.readLocal('purchase_requests', []).find(x => x.id === id);
     U.modal(`
     <div class="modal-hdr"><h3>Edit ${p.ref}</h3><button class="icon-btn" onclick="U.closeModal()">${U.iX}</button></div>
     <div class="modal-body">
@@ -247,22 +246,21 @@ const PR = {
       `Approval Route: Vessel → TSI → FM`
     ].filter(x => x.includes(':') && x.split(':')[1].trim());
     const remarks = [document.getElementById('ep-rem').value, extraMeta.join(' | ')].filter(Boolean).join(' | ');
-    const { error } = await sb.from('purchase_requests').update({
+    U.updateLocal('purchase_requests', id, {
       vessel_id: document.getElementById('ep-v').value,
       status: document.getElementById('ep-s').value,
       priority: document.getElementById('ep-pri').value,
       required_by: document.getElementById('ep-rb').value || null,
       requester: document.getElementById('ep-req').value,
       remarks
-    }).eq('id', id);
-    if (error) { U.toast('Update failed', 'err'); return; }
+    });
     U.toast('PR updated', 'ok'); U.closeModal(); App.renderPage();
   },
 
   async delete(id) {
     if (!confirm('Delete this PR and all its line items?')) return;
-    await sb.from('pr_line_items').delete().eq('pr_id', id);
-    await sb.from('purchase_requests').delete().eq('id', id);
+    U.deleteLocal('pr_line_items', id);
+    U.deleteLocal('purchase_requests', id);
     U.toast('PR deleted'); App.renderPage();
   },
 
@@ -320,17 +318,16 @@ const PR = {
     const vessel_id = document.getElementById('imp-v').value;
     if (!vessel_id) { U.toast('Select a vessel', 'err'); return; }
     if (!PR._importedItems.length) { U.toast('No items', 'err'); return; }
-    const ref = await U.nextRef('purchase_requests', 'PR');
+    const ref = `PR-${new Date().getFullYear()}-${String((U.readLocal('purchase_requests', []).length || 0) + 1).padStart(3, '0')}`;
     const summary = PR._importedItems.slice(0, 3).map(i => i.description).join(', ') + (PR._importedItems.length > 3 ? ` + ${PR._importedItems.length - 3} more` : '');
-    const { data: pr, error } = await sb.from('purchase_requests').insert({
+    const pr = U.addLocal('purchase_requests', {
       ref, vessel_id, item: summary, category: PR._importedItems[0]?.category || 'Spare Parts',
       priority: document.getElementById('imp-pri').value,
       required_by: document.getElementById('imp-rb').value || null,
       requester: document.getElementById('imp-req').value,
       status: 'Pending RFQ'
-    }).select().single();
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    await sb.from('pr_line_items').insert(PR._importedItems.map((it, i) => ({ ...it, item_no: it.item_no || i + 1, pr_id: pr.id })));
+    });
+    PR._importedItems.forEach((it, i) => U.addLocal('pr_line_items', { ...it, item_no: it.item_no || i + 1, pr_id: pr.id }));
     U.toast('PR imported — ' + PR._importedItems.length + ' items', 'ok');
     U.closeModal(); App.renderPage();
   }

@@ -2,8 +2,8 @@
 
 const RFQ = {
   async render(el) {
-    const { data: rfqs } = await sb.from('rfqs').select('*, purchase_requests(ref,item,vessel_id)').order('created_at', { ascending: false });
-    const { data: quotes } = await sb.from('quotes').select('rfq_id');
+    const rfqs = U.readLocal('rfqs', []);
+    const quotes = U.readLocal('quotes', []);
     const qcMap = {};
     (quotes || []).forEach(q => { qcMap[q.rfq_id] = (qcMap[q.rfq_id] || 0) + 1; });
 
@@ -37,14 +37,18 @@ const RFQ = {
   },
 
   async openNew() {
-    const { data: eligible } = await sb.from('purchase_requests').select('*,pr_line_items(*)').in('status', ['Pending RFQ', 'RFQ Issued']);
-    if (!eligible?.length) { U.toast('No PRs available for RFQ', 'err'); return; }
-    RFQ._buildModal(eligible, null);
+    const eligible = U.readLocal('purchase_requests', []).filter(p => ['Pending RFQ','RFQ Issued'].includes(p.status));
+    const lineItems = U.readLocal('pr_line_items', []);
+    const eligibleWithItems = eligible.map(p => ({ ...p, pr_line_items: lineItems.filter(li => li.pr_id === p.id) }));
+    if (!eligibleWithItems.length) { U.toast('No PRs available for RFQ', 'err'); return; }
+    RFQ._buildModal(eligibleWithItems, null);
   },
 
   async openForPR(prId) {
-    const { data: eligible } = await sb.from('purchase_requests').select('*,pr_line_items(*)').in('status', ['Pending RFQ', 'RFQ Issued']);
-    RFQ._buildModal(eligible || [], prId);
+    const eligible = U.readLocal('purchase_requests', []).filter(p => ['Pending RFQ','RFQ Issued'].includes(p.status));
+    const lineItems = U.readLocal('pr_line_items', []);
+    const eligibleWithItems = eligible.map(p => ({ ...p, pr_line_items: lineItems.filter(li => li.pr_id === p.id) }));
+    RFQ._buildModal(eligibleWithItems || [], prId);
   },
 
   _buildModal(eligible, selPrId) {
@@ -98,27 +102,26 @@ const RFQ = {
     const pr_id = document.getElementById('rfq-pr').value;
     const suppliers = Array.from(document.querySelectorAll('.vnd-chk:checked')).map(c => c.value);
     if (!suppliers.length) { U.toast('Select at least one vendor', 'err'); return; }
-    const ref = await U.nextRef('rfqs', 'RFQ');
-    const { data: rfq, error } = await sb.from('rfqs').insert({
+    const ref = `RFQ-${new Date().getFullYear()}-${String((U.readLocal('rfqs', []).length || 0) + 1).padStart(3, '0')}`;
+    const rfq = U.addLocal('rfqs', {
       ref, pr_id,
       issued_date: document.getElementById('rfq-date').value,
       deadline: document.getElementById('rfq-dl').value || null,
       suppliers,
-      notes: document.getElementById('rfq-notes').value
-    }).select().single();
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    // Update checked line items
+      notes: document.getElementById('rfq-notes').value,
+      selected_quote_id: null,
+      selected_supplier: null,
+      status: 'RFQ Issued'
+    });
     const liChks = document.querySelectorAll('.li-chk:checked');
-    for (const chk of liChks) {
-      await sb.from('pr_line_items').update({ rfq_id: rfq.id, status: 'RFQ Issued' }).eq('id', chk.value);
-    }
-    await sb.from('purchase_requests').update({ status: 'RFQ Issued' }).eq('id', pr_id);
+    liChks.forEach(chk => U.updateLocal('pr_line_items', chk.value, { rfq_id: rfq.id, status: 'RFQ Issued' }));
+    U.updateLocal('purchase_requests', pr_id, { status: 'RFQ Issued' });
     U.toast('RFQ issued', 'ok'); U.closeModal(); App.renderPage();
   },
 
   async view(id) {
-    const { data: r } = await sb.from('rfqs').select('*, purchase_requests(ref,item,vessel_id)').eq('id', id).single();
-    const { data: quotes } = await sb.from('quotes').select('*').eq('rfq_id', id).order('amount');
+    const r = U.readLocal('rfqs', []).find(x => x.id === id);
+    const quotes = U.readLocal('quotes', []).filter(x => x.rfq_id === id).sort((a, b) => (a.amount || 0) - (b.amount || 0));
     const pr = r.purchase_requests;
     const amountsUSD = (quotes || []).map(q => U.toUSD(q.amount, q.currency));
     const minUSD = amountsUSD.length ? Math.min(...amountsUSD) : null;
@@ -204,24 +207,20 @@ const RFQ = {
     if (supplier === '__other') supplier = document.getElementById('q-sup2').value.trim();
     const amount = parseFloat(document.getElementById('q-amt').value);
     if (!supplier || !amount) { U.toast('Supplier and amount required', 'err'); return; }
-    let attachment_path = null;
-    const f = document.getElementById('q-file').files[0];
-    if (f) attachment_path = await U.uploadFile(f, 'quotes', rfqId);
-    const { error } = await sb.from('quotes').insert({
+    U.addLocal('quotes', {
       rfq_id: rfqId, supplier, amount, currency: document.getElementById('q-cur').value,
       delivery_time: document.getElementById('q-del').value,
       validity: document.getElementById('q-val').value,
       notes: document.getElementById('q-notes').value,
-      attachment_path
+      attachment_path: null
     });
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    const { data: rfq } = await sb.from('rfqs').select('pr_id').eq('id', rfqId).single();
-    if (rfq?.pr_id) await sb.from('purchase_requests').update({ status: 'Quotes Received' }).eq('id', rfq.pr_id);
+    const rfq = U.readLocal('rfqs', []).find(x => x.id === rfqId);
+    if (rfq?.pr_id) U.updateLocal('purchase_requests', rfq.pr_id, { status: 'Quotes Received' });
     U.toast('Quote saved', 'ok'); U.closeModal(); App.renderPage();
   },
 
   async award(rfqId, quoteId, supplier, prId) {
-    await sb.from('rfqs').update({ selected_quote_id: quoteId, selected_supplier: supplier }).eq('id', rfqId);
+    U.updateLocal('rfqs', rfqId, { selected_quote_id: quoteId, selected_supplier: supplier, status: 'Awarded' });
     U.toast('Quote awarded to ' + supplier, 'ok'); U.closeModal(); App.renderPage();
   },
 
@@ -275,15 +274,14 @@ const RFQ = {
     if (supplier === '__other') supplier = document.getElementById('aiq-sup2').value.trim();
     if (!supplier) { U.toast('Select supplier', 'err'); return; }
     const total = items.reduce((s, i) => s + ((i.unit_price || 0) * (i.qty || 1)), 0);
-    const { error } = await sb.from('quotes').insert({
+    U.addLocal('quotes', {
       rfq_id: rfqId, supplier, amount: total, currency: items[0]?.currency || 'USD',
       delivery_time: items[0]?.delivery_time || null,
       validity: items[0]?.validity || null,
       notes: 'AI-extracted from quote file'
     });
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    const { data: rfq } = await sb.from('rfqs').select('pr_id').eq('id', rfqId).single();
-    if (rfq?.pr_id) await sb.from('purchase_requests').update({ status: 'Quotes Received' }).eq('id', rfq.pr_id);
+    const rfq = U.readLocal('rfqs', []).find(x => x.id === rfqId);
+    if (rfq?.pr_id) U.updateLocal('purchase_requests', rfq.pr_id, { status: 'Quotes Received' });
     U.toast('AI quote imported', 'ok'); U.closeModal(); App.renderPage();
   }
 };

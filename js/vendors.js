@@ -51,7 +51,7 @@ const Vendors = {
   },
 
   async render(el) {
-    const { data: vlist } = await sb.from('vendors').select('*').eq('active', true).order('name');
+    const vlist = U.readLocal('vendors', []).filter(v => v.active !== false).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     Vendors.allVendors = vlist || [];
     window._vendors = Vendors.allVendors;
     el.innerHTML = `
@@ -102,8 +102,12 @@ const Vendors = {
       <div class="form-group"><label>Currency</label><select id="vn-cur">${CURRENCIES.map(c => `<option ${c === (v.currency || 'USD') ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
       <div class="form-group"><label>Payment Terms</label><select id="vn-pay"><option value="">—</option>${PAYMENT_TERMS.map(t => `<option ${t === v.payment_terms ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
     </div>
-    <div class="form-group"><label>Supply Categories (hold Ctrl for multiple)</label>
-      <select id="vn-cats" multiple style="height:95px">${CATEGORIES.map(c => `<option ${(v.categories || []).includes(c) ? 'selected' : ''}>${c}</option>`).join('')}</select>
+    <div class="form-group"><label>Supply Categories</label>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:6px 0">${CATEGORIES.map(c => `
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+          <input type="checkbox" class="vendor-cat-checkbox" value="${c}" ${(v.categories || []).includes(c) ? 'checked' : ''}>
+          ${c}
+        </label>`).join('')}</div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Brochure / Document URL</label><input type="url" id="vn-doc-url" value="${v.document_url || ''}" placeholder="https://..."></div>
@@ -124,7 +128,7 @@ const Vendors = {
   },
 
   async edit(id) {
-    const { data: v } = await sb.from('vendors').select('*').eq('id', id).single();
+    const v = (Vendors.allVendors || []).find(x => x.id === id) || U.readLocal('vendors', []).find(x => x.id === id);
     U.modal(`
     <div class="modal-hdr"><h3>Edit Vendor</h3><button class="icon-btn" onclick="U.closeModal()">${U.iX}</button></div>
     <div class="modal-body">${Vendors._form(v)}</div>
@@ -143,27 +147,28 @@ const Vendors = {
       port: document.getElementById('vn-port').value,
       currency: document.getElementById('vn-cur').value,
       payment_terms: document.getElementById('vn-pay').value,
-      categories: Array.from(document.getElementById('vn-cats').selectedOptions).map(o => o.value),
+      categories: Array.from(document.querySelectorAll('.vendor-cat-checkbox:checked')).map(o => o.value),
       rating: parseInt(document.getElementById('vn-rating').value) || 3,
       notes: document.getElementById('vn-notes').value,
       document_url: document.getElementById('vn-doc-url').value.trim(),
-      document_notes: document.getElementById('vn-doc-notes').value.trim()
+      document_notes: document.getElementById('vn-doc-notes').value.trim(),
+      active: true
     };
     if (id) {
-      await sb.from('vendors').update(payload).eq('id', id);
+      U.updateLocal('vendors', id, payload);
     } else {
-      await sb.from('vendors').insert(payload);
+      U.addLocal('vendors', payload);
     }
-    const { data: fresh } = await sb.from('vendors').select('*').eq('active', true);
-    window._vendors = fresh || [];
+    Vendors.allVendors = U.readLocal('vendors', []).filter(v => v.active !== false).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    window._vendors = Vendors.allVendors;
     U.toast('Vendor saved', 'ok'); U.closeModal(); App.renderPage();
   },
 
   async deactivate(id) {
     if (!confirm('Remove this vendor?')) return;
-    await sb.from('vendors').update({ active: false }).eq('id', id);
-    const { data: fresh } = await sb.from('vendors').select('*').eq('active', true);
-    window._vendors = fresh || [];
+    U.updateLocal('vendors', id, { active: false });
+    Vendors.allVendors = U.readLocal('vendors', []).filter(v => v.active !== false).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    window._vendors = Vendors.allVendors;
     U.toast('Vendor removed'); App.renderPage();
   }
 };

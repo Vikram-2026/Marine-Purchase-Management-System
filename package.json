@@ -1,0 +1,11 @@
+{
+  "name": "marine-purchase-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "init:supabase": "node scripts/supabase-init.js"
+  },
+  "dependencies": {
+    "pg": "^8.2.0"
+  }
+}

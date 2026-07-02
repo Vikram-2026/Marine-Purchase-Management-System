@@ -1,7 +1,7 @@
 // js/po.js — Purchase Orders
 const PO = {
   async render(el) {
-    const { data: pos } = await sb.from('purchase_orders').select('*,purchase_requests(ref)').order('created_at', { ascending: false });
+    const pos = U.readLocal('purchase_orders', []);
     el.innerHTML = `
     <div class="page-hdr"><h2>Purchase Orders</h2><button class="btn btn-primary" onclick="PO.openNew()">+ Raise PO</button></div>
     <div class="tcard"><table>
@@ -21,8 +21,8 @@ const PO = {
   },
 
   async openNew() {
-    const { data: rfqs } = await sb.from('rfqs').select('*,purchase_requests(ref,item)').not('selected_quote_id', 'is', null);
-    const { data: ep } = await sb.from('purchase_orders').select('rfq_id');
+    const rfqs = U.readLocal('rfqs', []).filter(r => r.selected_quote_id);
+    const ep = U.readLocal('purchase_orders', []);
     const used = new Set((ep || []).map(p => p.rfq_id));
     const eligible = (rfqs || []).filter(r => !used.has(r.id));
     if (!eligible.length) { U.toast('No awarded quotes available. Award a quote in RFQ first.', 'err'); return; }
@@ -49,32 +49,31 @@ const PO = {
   },
 
   async _fill(rfqId) {
-    const { data: rfq } = await sb.from('rfqs').select('*,quotes(*)').eq('id', rfqId).single();
-    const q = rfq?.quotes?.find(x => x.id === rfq.selected_quote_id);
+    const rfq = U.readLocal('rfqs', []).find(x => x.id === rfqId);
+    const quotes = U.readLocal('quotes', []).filter(x => x.rfq_id === rfqId);
+    const q = quotes.find(x => x.id === rfq.selected_quote_id);
     if (q) document.getElementById('po-fill').innerHTML =
       `<strong>${q.supplier}</strong> — ${q.currency} ${q.amount?.toLocaleString()} | ≈ ${U.fmtUSD(q.amount, q.currency)} | Delivery: ${q.delivery_time || '—'} | ${q.notes || ''}`;
   },
 
   async save() {
     const rfqId = document.getElementById('po-rfq').value;
-    const { data: rfq } = await sb.from('rfqs').select('*,quotes(*)').eq('id', rfqId).single();
-    const q = rfq?.quotes?.find(x => x.id === rfq.selected_quote_id);
+    const rfq = U.readLocal('rfqs', []).find(x => x.id === rfqId);
+    const quotes = U.readLocal('quotes', []).filter(x => x.rfq_id === rfqId);
+    const q = quotes.find(x => x.id === rfq.selected_quote_id);
     if (!q) { U.toast('No awarded quote found', 'err'); return; }
-    let attachment_path = null;
-    const f = document.getElementById('po-file').files[0];
-    if (f) attachment_path = await U.uploadFile(f, 'pos', rfqId);
-    const ref = await U.nextRef('purchase_orders', 'PO');
-    const { error } = await sb.from('purchase_orders').insert({
+    const ref = `PO-${new Date().getFullYear()}-${String((U.readLocal('purchase_orders', []).length || 0) + 1).padStart(3, '0')}`;
+    U.addLocal('purchase_orders', {
       ref, pr_id: rfq.pr_id, rfq_id: rfqId,
       supplier: q.supplier, amount: q.amount, currency: q.currency,
       po_date: document.getElementById('po-date').value,
       delivery_date: document.getElementById('po-del').value || null,
       payment_terms: document.getElementById('po-pay').value,
       incoterms: document.getElementById('po-inc').value,
-      attachment_path
+      attachment_path: null,
+      status: 'Open'
     });
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
-    await sb.from('purchase_requests').update({ status: 'PO Raised' }).eq('id', rfq.pr_id);
+    U.updateLocal('purchase_requests', rfq.pr_id, { status: 'PO Raised' });
     U.toast('PO raised', 'ok'); U.closeModal(); App.renderPage();
   }
 };

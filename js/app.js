@@ -75,32 +75,30 @@ const App = {
   },
 
   async renderDashboard(el) {
-    const [
-      { count: totalPR }, { count: pendingRFQ }, { count: totalPO },
-      { count: pendingInv }, { count: pendingDN }, { data: recentPRs },
-      { data: pos }
-    ] = await Promise.all([
-      sb.from('purchase_requests').select('*', { count: 'exact', head: true }),
-      sb.from('purchase_requests').select('*', { count: 'exact', head: true }).eq('status', 'Pending RFQ'),
-      sb.from('purchase_orders').select('*', { count: 'exact', head: true }),
-      sb.from('invoices').select('*', { count: 'exact', head: true }).in('status', ['Received', 'Verified']),
-      sb.from('purchase_requests').select('*', { count: 'exact', head: true }).eq('status', 'PO Raised'),
-      sb.from('purchase_requests').select('*').order('created_at', { ascending: false }).limit(8),
-      sb.from('purchase_orders').select('amount,currency,po_date, purchase_requests(vessel_id)').order('po_date', { ascending: false })
-    ]);
+    const prs = U.readLocal('purchase_requests', []);
+    const pos = U.readLocal('purchase_orders', []);
+    const invoices = U.readLocal('invoices', []);
+    const totalPR = prs.length;
+    const pendingRFQ = prs.filter(p => p.status === 'Pending RFQ').length;
+    const totalPO = pos.length;
+    const pendingInv = invoices.filter(i => ['Received', 'Verified'].includes(i.status)).length;
+    const pendingDN = pos.filter(p => p.status !== 'Delivered' && p.status !== 'Cancelled').length;
+    const recentPRs = prs.slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)).slice(0, 8);
 
-    const budgets = JSON.parse(localStorage.getItem('mp_vessel_budgets') || '{}');
     const month = new Date().toISOString().slice(0, 7);
+    let budgetRows = [];
+    const budgets = JSON.parse(localStorage.getItem('mp_vessel_budgets') || '{}');
     const actualByKey = {};
+    const prById = Object.fromEntries(prs.map(p => [p.id, p]));
     (pos || []).forEach(po => {
-      const vesselId = po.purchase_requests?.vessel_id;
+      const vesselId = prById[po.pr_id]?.vessel_id;
       const poMonth = po.po_date?.slice(0, 7);
       if (!vesselId || !poMonth) return;
       const usd = U.toUSD(po.amount, po.currency || 'USD');
       const key = `${vesselId}::${poMonth}`;
       actualByKey[key] = (actualByKey[key] || 0) + usd;
     });
-    const budgetRows = (App.vessels || []).map(v => {
+    budgetRows = (App.vessels || []).map(v => {
       const key = `${v.id}::${month}`;
       const budget = Number(budgets[key] || 0);
       const actual = Number(actualByKey[key] || 0);
@@ -165,7 +163,7 @@ const App = {
   },
 
   async renderPipeline(el) {
-    const { data: prs } = await sb.from('purchase_requests').select('*').order('created_at', { ascending: false });
+    const prs = U.readLocal('purchase_requests', []).slice().sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
     const grouped = {};
     PR_STATUSES.forEach(s => grouped[s] = []);
     (prs || []).forEach(p => { if (grouped[p.status]) grouped[p.status].push(p); });
@@ -190,12 +188,7 @@ const App = {
 
 // ── BOOT ──
 window.addEventListener('load', () => {
-  // No Supabase keys yet → show config
-  if (!SB_URL || !SB_KEY || !sb) {
-    document.getElementById('cfg-screen').style.display = 'flex';
-    return;
-  }
-  // Check saved session
+  U.ensureSeedData();
   const user = Auth.checkSession();
   if (user) {
     App.launch(user);

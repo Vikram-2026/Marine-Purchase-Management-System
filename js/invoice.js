@@ -1,7 +1,7 @@
 // js/invoice.js
 const Invoice = {
   async render(el) {
-    const { data: invs } = await sb.from('invoices').select('*,purchase_orders(ref)').order('created_at', { ascending: false });
+    const invs = U.readLocal('invoices', []);
     el.innerHTML = `
     <div class="page-hdr"><h2>Invoices</h2><button class="btn btn-primary" onclick="Invoice.openNew()">+ Log Invoice</button></div>
     <div class="tcard"><table>
@@ -22,8 +22,8 @@ const Invoice = {
   },
 
   async openNew() {
-    const { data: pos } = await sb.from('purchase_orders').select('*');
-    const { data: ei } = await sb.from('invoices').select('po_id');
+    const pos = U.readLocal('purchase_orders', []);
+    const ei = U.readLocal('invoices', []);
     const used = new Set((ei || []).map(i => i.po_id));
     const eligible = (pos || []).filter(p => !used.has(p.id));
     if (!eligible.length) { U.toast('No POs without invoice yet.', 'err'); return; }
@@ -51,20 +51,16 @@ const Invoice = {
     const poId = document.getElementById('inv-po').value;
     const ref = document.getElementById('inv-ref').value.trim();
     if (!ref) { U.toast('Enter invoice reference number', 'err'); return; }
-    const { data: po } = await sb.from('purchase_orders').select('*,purchase_requests(id)').eq('id', poId).single();
-    let attachment_path = null;
-    const f = document.getElementById('inv-file').files[0];
-    if (f) attachment_path = await U.uploadFile(f, 'invoices', poId);
-    const { error } = await sb.from('invoices').insert({
-      ref, po_id: poId, pr_id: po.purchase_requests?.id || null,
-      supplier: po.supplier, currency: po.currency,
-      amount: parseFloat(document.getElementById('inv-amt').value) || po.amount,
+    const po = U.readLocal('purchase_orders', []).find(x => x.id === poId);
+    U.addLocal('invoices', {
+      ref, po_id: poId, pr_id: po?.pr_id || null,
+      supplier: po?.supplier || '', currency: po?.currency || 'USD',
+      amount: parseFloat(document.getElementById('inv-amt').value) || po?.amount || 0,
       invoice_date: document.getElementById('inv-date').value,
       due_date: document.getElementById('inv-due').value || null,
       status: document.getElementById('inv-st').value,
-      attachment_path
+      attachment_path: null
     });
-    if (error) { U.toast('Failed: ' + error.message, 'err'); return; }
     U.toast('Invoice logged', 'ok'); U.closeModal(); App.renderPage();
   },
 
@@ -83,7 +79,7 @@ const Invoice = {
   },
 
   async _doStatus(id) {
-    await sb.from('invoices').update({ status: document.getElementById('ni-s').value }).eq('id', id);
+    U.updateLocal('invoices', id, { status: document.getElementById('ni-s').value });
     U.toast('Status updated', 'ok'); U.closeModal(); App.renderPage();
   }
 };
